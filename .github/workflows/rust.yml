@@ -3,8 +3,8 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'               # 推送标签时自动构建并发布
-  workflow_dispatch:       # 支持手动触发
+      - 'v*'
+  workflow_dispatch:
     inputs:
       release_tag:
         description: 'Release tag (optional, will create release if provided)'
@@ -44,15 +44,13 @@ jobs:
         with:
           submodules: recursive
 
-      # 安装 cross 工具（用于非 amd64 架构）
       - name: Install cross
         if: matrix.use_cross == true
         run: |
           curl -L https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-musl.tar.gz | tar xzf -
           sudo mv cross /usr/local/bin/
 
-      # 为 amd64 安装系统依赖（包括 nasm）
-      - name: Install system dependencies (native)
+      - name: Install system dependencies (native amd64)
         if: matrix.use_cross == false
         run: |
           sudo apt-get update
@@ -70,6 +68,9 @@ jobs:
             libjpeg-turbo8-dev \
             libopus-dev \
             libv4l-dev \
+            libyuv-dev \
+            libavcodec-dev \
+            libavutil-dev \
             nasm
 
       - name: Setup Rust
@@ -91,17 +92,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
-      # 原生构建 amd64
       - name: Build binary (native)
         if: matrix.use_cross == false
         run: cargo build --release --target ${{ matrix.rust_target }}
 
-      # 使用 cross 构建其他架构
       - name: Build binary with cross
         if: matrix.use_cross == true
         run: cross build --release --target ${{ matrix.rust_target }}
 
-      # 打包 .deb（脚本会从 target/$rust_target/release/ 复制二进制）
       - name: Package .deb
         run: |
           chmod +x ./build/build-deb.sh
