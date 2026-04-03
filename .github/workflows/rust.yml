@@ -1,0 +1,172 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'               # 当推送形如 v0.1.8 的标签时触发
+  workflow_dispatch:       # 允许手动触发
+    inputs:
+      release_tag:
+        description: 'Release tag (optional, will create release if provided)'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build for ${{ matrix.target.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            rust_target: x86_64-unknown-linux-gnu
+            deb_arch: amd64
+            deps: >
+              gcc-multilib
+              libasound2-dev
+              libdrm-dev
+              libva-dev
+              libmfx-dev
+              libx11-dev
+              libxcb1-dev
+              libjpeg-turbo8-dev
+              libopus-dev
+              libv4l-dev
+              libclang-dev
+          - name: i386
+            rust_target: i686-unknown-linux-gnu
+            deb_arch: i386
+            deps: >
+              gcc-multilib
+              libasound2-dev:i386
+              libdrm-dev:i386
+              libva-dev:i386
+              libmfx-dev:i386
+              libx11-dev:i386
+              libxcb1-dev:i386
+              libjpeg-turbo8-dev:i386
+              libopus-dev:i386
+              libv4l-dev:i386
+              libclang-dev
+          - name: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            deb_arch: arm64
+            deps: >
+              gcc-aarch64-linux-gnu
+              libasound2-dev:arm64
+              libdrm-dev:arm64
+              libva-dev:arm64
+              libx11-dev:arm64
+              libxcb1-dev:arm64
+              libjpeg-turbo8-dev:arm64
+              libopus-dev:arm64
+              libv4l-dev:arm64
+              libclang-dev
+          - name: armhf
+            rust_target: armv7-unknown-linux-gnueabihf
+            deb_arch: armhf
+            deps: >
+              gcc-arm-linux-gnueabihf
+              libasound2-dev:armhf
+              libdrm-dev:armhf
+              libva-dev:armhf
+              libx11-dev:armhf
+              libxcb1-dev:armhf
+              libjpeg-turbo8-dev:armhf
+              libopus-dev:armhf
+              libv4l-dev:armhf
+              libclang-dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libudev-dev \
+            libssl-dev \
+            ${{ matrix.deps }}
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.rust_target }}
+          override: true
+          profile: minimal
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust_target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust_target }}-
+
+      - name: Build binary
+        run: |
+          cargo build --release --target ${{ matrix.rust_target }}
+        env:
+          CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER: i686-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+
+      - name: Package .deb
+        run: |
+          chmod +x ./build/build-deb.sh
+          ./build/build-deb.sh ${{ matrix.deb_arch }}
+        env:
+          # 确保脚本能找到交叉编译的二进制路径
+          CARGO_TARGET_DIR: target
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: one-kvm-${{ matrix.deb_arch }}
+          path: target/debian/one-kvm_*.deb
+
+  release:
+    name: Create Release and Upload Assets
+    needs: build
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+    steps:
+      - name: Determine Release Tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*.deb
+          generate_release_notes: true
