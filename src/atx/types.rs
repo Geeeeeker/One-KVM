@@ -30,6 +30,8 @@ pub enum AtxDriverType {
     UsbRelay,
     /// Serial/COM port relay (taobao LCUS type)
     Serial,
+    /// HTTP control to external device (e.g., ESP32)
+    Http,
     /// Disabled / Not configured
     #[default]
     None,
@@ -53,18 +55,21 @@ pub enum ActiveLevel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AtxKeyConfig {
-    /// Driver type (GPIO or USB Relay)
+    /// Driver type (GPIO, USB Relay, Serial, or Http)
     pub driver: AtxDriverType,
-    /// Device path:
+    /// Device path or URL:
     /// - For GPIO: /dev/gpiochipX
     /// - For USB Relay: /dev/hidrawX
+    /// - For Serial: /dev/ttyUSBX
+    /// - For Http: base URL of ESP32 (e.g., http://192.168.1.2)
     pub device: String,
-    /// Pin or channel number:
+    /// Pin, channel, or GPIO number:
     /// - For GPIO: GPIO pin number
     /// - For USB Relay: relay channel (0-based)
     /// - For Serial Relay (LCUS): relay channel (1-based)
+    /// - For Http: GPIO pin on ESP32 to control
     pub pin: u32,
-    /// Active level (only applicable to GPIO, ignored for USB Relay)
+    /// Active level (only applicable to GPIO, ignored for USB Relay/Http)
     pub active_level: ActiveLevel,
     /// Baud rate for serial relay (start with 9600)
     pub baud_rate: u32,
