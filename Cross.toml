@@ -1,20 +1,18 @@
-# Cross.toml - 配置 cross 编译环境，安装必要工具
-
 [target.aarch64-unknown-linux-gnu]
 pre-build = [
     "apt-get update",
-    "apt-get install -y nasm",
+    "apt-get install -y nasm pkg-config libudev-dev libyuv-dev libavcodec-dev libavutil-dev",
 ]
 
 [target.armv7-unknown-linux-gnueabihf]
 pre-build = [
     "apt-get update",
-    "apt-get install -y nasm",
+    "apt-get install -y nasm pkg-config libudev-dev libyuv-dev libavcodec-dev libavutil-dev",
 ]
 
 [target.i686-unknown-linux-gnu]
 pre-build = [
     "dpkg --add-architecture i386",
     "apt-get update",
-    "apt-get install -y nasm",
+    "apt-get install -y nasm pkg-config libudev-dev:i386 libyuv-dev:i386 libavcodec-dev:i386 libavutil-dev:i386",
 ]
