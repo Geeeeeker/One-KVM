@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, info};
+use reqwest::blocking::Client;
 
 use super::types::{ActiveLevel, AtxDriverType, AtxKeyConfig};
 use crate::error::{AppError, Result};
@@ -33,7 +34,7 @@ pub mod timing {
 /// Executor for a single ATX key operation
 ///
 /// Each executor manages one hardware button (power or reset).
-/// It handles both GPIO and USB relay backends.
+/// It handles GPIO, USB relay, serial, and HTTP backends.
 pub struct AtxKeyExecutor {
     config: AtxKeyConfig,
     gpio_handle: Mutex<Option<LineHandle>>,
@@ -41,6 +42,8 @@ pub struct AtxKeyExecutor {
     usb_relay_handle: Mutex<Option<File>>,
     /// Cached Serial port handle
     serial_handle: Mutex<Option<Box<dyn SerialPort>>>,
+    /// HTTP client for web requests
+    http_client: Mutex<Option<Client>>,
     initialized: AtomicBool,
 }
 
@@ -52,6 +55,7 @@ impl AtxKeyExecutor {
             gpio_handle: Mutex::new(None),
             usb_relay_handle: Mutex::new(None),
             serial_handle: Mutex::new(None),
+            http_client: Mutex::new(None),
             initialized: AtomicBool::new(false),
         }
     }
@@ -79,6 +83,7 @@ impl AtxKeyExecutor {
             AtxDriverType::Gpio => self.init_gpio().await?,
             AtxDriverType::UsbRelay => self.init_usb_relay().await?,
             AtxDriverType::Serial => self.init_serial().await?,
+            AtxDriverType::Http => self.init_http().await?,
             AtxDriverType::None => {}
         }
 
@@ -112,6 +117,14 @@ impl AtxKeyExecutor {
                         "USB relay channel must be <= {}",
                         u8::MAX
                     )));
+                }
+            }
+            AtxDriverType::Http => {
+                if self.config.device.is_empty() {
+                    return Err(AppError::Config("HTTP URL cannot be empty".to_string()));
+                }
+                if self.config.pin == 0 {
+                    return Err(AppError::Config("HTTP pin must be specified (>= 1)".to_string()));
                 }
             }
             AtxDriverType::Gpio | AtxDriverType::None => {}
@@ -200,6 +213,17 @@ impl AtxKeyExecutor {
         Ok(())
     }
 
+    /// Initialize HTTP backend
+    async fn init_http(&self) -> Result<()> {
+        info!(
+            "Initializing HTTP ATX executor on URL {} pin {}",
+            self.config.device, self.config.pin
+        );
+        let client = Client::new();
+        *self.http_client.lock().unwrap() = Some(client);
+        Ok(())
+    }
+
     /// Pulse the button for the specified duration
     pub async fn pulse(&self, duration: Duration) -> Result<()> {
         if !self.is_configured() {
@@ -214,6 +238,7 @@ impl AtxKeyExecutor {
             AtxDriverType::Gpio => self.pulse_gpio(duration).await,
             AtxDriverType::UsbRelay => self.pulse_usb_relay(duration).await,
             AtxDriverType::Serial => self.pulse_serial(duration).await,
+            AtxDriverType::Http => self.pulse_http(duration).await,
             AtxDriverType::None => Ok(()),
         }
     }
@@ -348,6 +373,39 @@ impl AtxKeyExecutor {
         Ok(())
     }
 
+    /// Pulse HTTP endpoint
+    async fn pulse_http(&self, duration: Duration) -> Result<()> {
+        let base_url = self.config.device.trim_end_matches('/');
+        let url = format!(
+            "{}/control?pin={}&action=pulse&duration={}",
+            base_url,
+            self.config.pin,
+            duration.as_millis()
+        );
+
+        info!("Sending HTTP pulse request: {}", url);
+
+        let client_guard = self.http_client.lock().unwrap();
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| AppError::Internal("HTTP client not initialized".to_string()))?;
+
+        let response = client
+            .post(&url)
+            .send()
+            .map_err(|e| AppError::Internal(format!("HTTP request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(AppError::Internal(format!(
+                "HTTP request returned error: {}",
+                response.status()
+            )));
+        }
+
+        debug!("HTTP pulse request succeeded");
+        Ok(())
+    }
+
     /// Shutdown the executor
     pub async fn shutdown(&mut self) -> Result<()> {
         if !self.is_initialized() {
@@ -370,6 +428,9 @@ impl AtxKeyExecutor {
                 let _ = self.send_serial_relay_command(false);
                 // Release Serial relay handle
                 *self.serial_handle.lock().unwrap() = None;
+            }
+            AtxDriverType::Http => {
+                *self.http_client.lock().unwrap() = None;
             }
             AtxDriverType::None => {}
         }
@@ -396,6 +457,11 @@ impl Drop for AtxKeyExecutor {
             let _ = self.send_serial_relay_command(false);
         }
         *self.serial_handle.lock().unwrap() = None;
+
+        // Release HTTP client
+        if self.config.driver == AtxDriverType::Http && self.is_initialized() {
+            *self.http_client.lock().unwrap() = None;
+        }
     }
 }
 
