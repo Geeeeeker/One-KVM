@@ -46,8 +46,8 @@ base64 = "0.22"
 nix = { version = "0.30", features = ["fs", "net", "hostname", "poll"] }
 
 # HTTP client (for URL downloads)
-# Use rustls by default, but allow native-tls for systems with older GLIBC
-reqwest = { version = "0.13", features = ["stream", "rustls", "json"], default-features = false }
+# Added "blocking" feature for synchronous HTTP requests (used by ATX HTTP driver)
+reqwest = { version = "0.13", features = ["stream", "rustls", "json", "blocking"], default-features = false }
 urlencoding = "2"
 
 # Static file embedding
