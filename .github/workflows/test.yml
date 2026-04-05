@@ -35,48 +35,45 @@ jobs:
               apt-get install -y python3 python3-pip python3-venv ruby ruby-dev rubygems build-essential
               gem install --no-document fpm
               
-              # 2. 模拟生产路径构建 (将源码同步到 /opt/onekvm)
-              mkdir -p /opt/onekvm
-              cp -r /src/. /opt/onekvm/
+              # 2. 准备构建根目录 (Staging Directory)
+              # 我们将所有要打包到 /opt/onekvm 的内容放入此目录
+              BUILD_ROOT='/tmp/build_root'
+              mkdir -p \$BUILD_ROOT/opt/onekvm
               
-              # 3. 准备虚拟环境并安装
-              python3 -m venv /opt/onekvm/venv
-              /opt/onekvm/venv/bin/pip install --upgrade pip
-              /opt/onekvm/venv/bin/pip install /opt/onekvm/
+              # 复制源码并安装环境
+              cp -r /src/. \$BUILD_ROOT/opt/onekvm/
+              python3 -m venv \$BUILD_ROOT/opt/onekvm/venv
+              \$BUILD_ROOT/opt/onekvm/venv/bin/pip install --upgrade pip
+              \$BUILD_ROOT/opt/onekvm/venv/bin/pip install \$BUILD_ROOT/opt/onekvm/
               
-              # 4. 智能处理 Service 和配置文件 (修正路径逻辑)
+              # 3. 处理 Systemd Service 和 .d 目录
               SERVICE_ARGS=''
-              EXTRA_FILES_ARGS=''
-              # 注意：这里使用 /src 路径下的文件进行逻辑判断，因为它们是持久化的
-              SERVICE_DIR='/src/configs/os/services'
+              SERVICE_SRC='/src/configs/os/services'
               
-              if [ -d \"\$SERVICE_DIR\" ]; then
-                for f in \$SERVICE_DIR/*; do
-                  # 获取文件名，用于后续拼接
+              if [ -d \"\$SERVICE_SRC\" ]; then
+                for f in \$SERVICE_SRC/*; do
                   fname=\$(basename \"\$f\")
                   if [[ \"\$fname\" == *.service ]] || [[ \"\$fname\" == *.timer ]]; then
-                    # fpm 的 --deb-systemd 需要容器内的实际物理路径
+                    # fpm 的 --deb-systemd 需要容器内文件的绝对路径
                     SERVICE_ARGS=\"\$SERVICE_ARGS --deb-systemd \$f\"
                   elif [[ \"\$fname\" == *.d ]]; then
-                    # 映射：源路径=安装目标路径
-                    EXTRA_FILES_ARGS=\"\$EXTRA_FILES_ARGS \$f=/lib/systemd/system/\$fname\"
+                    # 将 .d 目录复制到 BUILD_ROOT 对应的系统路径下
+                    mkdir -p \"\$BUILD_ROOT/lib/systemd/system/\"
+                    cp -r \"\$f\" \"\$BUILD_ROOT/lib/systemd/system/\"
                   fi
                 done
               fi
 
-              # 5. 执行打包
-              # -C 指定为 /opt/onekvm，意味着打包该目录下的所有内容
-              # '.' 表示打包 -C 路径下的所有文件，并附加到 --prefix 指定的 /opt/onekvm
+              # 4. 执行打包
+              # 将 -p 等参数放在前面，-C 放在后面，最后接 '.'
               fpm -s dir -t deb \
                   -n onekvm \
                   -v '${{ github.event.inputs.version }}' \
                   -a arm64 \
+                  -p /src/onekvm_${{ github.event.inputs.version }}_arm64.deb \
                   -d 'python3' \
                   \$SERVICE_ARGS \
-                  --prefix /opt/onekvm \
-                  -C /opt/onekvm . \
-                  \$EXTRA_FILES_ARGS \
-                  -p /src/onekvm_${{ github.event.inputs.version }}_arm64.deb
+                  -C \$BUILD_ROOT .
           "
 
       - name: Create GitHub Release
@@ -89,6 +86,6 @@ jobs:
             ## OneKVM (PiKVM Python) ARM64 Build
             - **Version:** ${{ github.event.inputs.version }}
             - **Architecture:** ARM64
-            - **Contents:** All kvmd services and .d configuration directories.
+            - **Contents:** Includes venv, services, and systemd drop-in configs.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
