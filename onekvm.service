@@ -1,0 +1,12 @@
+[Unit]
+Description=OneKVM Python Service
+After=network.target
+
+[Service]
+ExecStart=/opt/onekvm/venv/bin/python3 /opt/onekvm/main.py
+WorkingDirectory=/opt/onekvm
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
