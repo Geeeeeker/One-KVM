@@ -30,42 +30,42 @@ jobs:
             -v ${{ github.workspace }}:/src \
             -w /src \
             arm64v8/ubuntu:22.04 /bin/bash -ce "
-              # 1. 基础环境准备 (海外服务器直接访问原源，更稳定)
+              # 1. 基础环境准备
               apt-get update
               apt-get install -y python3 python3-pip python3-venv ruby ruby-dev rubygems build-essential
               
               # 2. 安装打包工具 FPM
               gem install --no-document fpm
               
-              # 3. 准备构建目录
+              # 3. 准备构建目录并同步源码
               mkdir -p /opt/onekvm
-              cp -r . /opt/onekvm/
+              cp -r /src/. /opt/onekvm/
               
               # 4. 构建 Python 虚拟环境
               python3 -m venv /opt/onekvm/venv
               /opt/onekvm/venv/bin/pip install --upgrade pip
               
-              # 如果存在 setup.py 或 pyproject.toml 则安装
+              # 安装项目及其依赖
               if [ -f '/opt/onekvm/setup.py' ] || [ -f '/opt/onekvm/pyproject.toml' ]; then
                 /opt/onekvm/venv/bin/pip install /opt/onekvm/
               fi
               
               # 5. 执行 FPM 打包
-              # 注意：--deb-systemd 后面必须跟仓库中现有的 service 文件名
+              # 核心修正：指定 --deb-systemd 的完整路径 /opt/onekvm/onekvm.service
               fpm -s dir -t deb \
                   -n onekvm \
                   -v '${{ github.event.inputs.version }}' \
                   -a arm64 \
                   -d 'python3' \
-                  --deb-systemd onekvm.service \
+                  --deb-systemd /opt/onekvm/onekvm.service \
                   --prefix /opt/onekvm \
                   -C /opt/onekvm .
               
-              # 6. 将生成的 deb 移动到挂载目录
+              # 6. 将生成的 deb 移动到挂载目录供 Action 读取
               mv *.deb /src/
           "
 
-      - name: Check and Upload
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
@@ -75,7 +75,6 @@ jobs:
             ## OneKVM ARM64 Build
             - **Version:** ${{ github.event.inputs.version }}
             - **Architecture:** ARM64
-            - **Install:** `sudo dpkg -i onekvm_${{ github.event.inputs.version }}_arm64.deb`
-            - **Start:** `sudo systemctl enable --now onekvm`
+            - **Service:** `sudo systemctl enable --now onekvm`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
