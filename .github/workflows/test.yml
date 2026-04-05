@@ -1,0 +1,57 @@
+name: Build and Release OneKVM ARM64 Deb
+
+on:
+  push:
+    tags:
+      - 'v*' # 当推送以 v 开头的标签时触发
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build DEB in ARM64 Container
+        run: |
+          docker run --rm --privileged -v ${{ github.workspace }}:/src -w /src arm64v8/ubuntu:22.04 /bin/bash -c "
+            # 1. 安装构建依赖
+            apt-get update && apt-get install -y python3 python3-pip python3-venv ruby ruby-dev rubygems build-essential
+            gem install --no-document fpm
+            
+            # 2. 准备 Python 环境 (假设您的入口是 onekvm)
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install . # 安装当前目录的 python 项目
+            
+            # 3. 使用 FPM 打包
+            # --prefix /opt/onekvm 指定安装路径
+            # -s dir -t deb 指定从目录转为 deb
+            fpm -s dir -t deb \
+                -n onekvm \
+                -v ${{ github.ref_name }} \
+                -a arm64 \
+                -d 'python3' \
+                --prefix /opt/onekvm \
+                .=/opt/onekvm
+          "
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p release_files
+          mv *.deb release_files/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release_files/*.deb
+          body: "OneKVM for ARM64 (Ubuntu) - Automated Build"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
