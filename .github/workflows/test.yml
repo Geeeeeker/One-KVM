@@ -35,7 +35,7 @@ jobs:
               apt-get install -y python3 python3-pip python3-venv ruby ruby-dev rubygems build-essential
               gem install --no-document fpm
               
-              # 2. 模拟生产路径构建 (防止 venv 路径失效)
+              # 2. 模拟生产路径构建
               mkdir -p /opt/onekvm
               cp -r /src/. /opt/onekvm/
               
@@ -43,17 +43,26 @@ jobs:
               /opt/onekvm/venv/bin/pip install --upgrade pip
               /opt/onekvm/venv/bin/pip install /opt/onekvm/
 
-              # 3. 动态获取所有 Systemd 服务文件
-              # 遍历 configs/os/services/ 下所有的 .service, .timer, .d 目录
+              # 3. 智能处理 Service 和配置文件
+              # 分离 .service/.timer (使用 --deb-systemd) 和 .d 目录 (直接映射路径)
               SERVICE_ARGS=''
+              EXTRA_FILES_ARGS=''
               SERVICE_DIR='/opt/onekvm/configs/os/services'
+              
               if [ -d \"\$SERVICE_DIR\" ]; then
                 for f in \$SERVICE_DIR/*; do
-                  SERVICE_ARGS=\"\$SERVICE_ARGS --deb-systemd \$f\"
+                  if [[ \"\$f\" == *.service ]] || [[ \"\$f\" == *.timer ]]; then
+                    SERVICE_ARGS=\"\$SERVICE_ARGS --deb-systemd \$f\"
+                  elif [[ \"\$f\" == *.d ]]; then
+                    # 获取文件夹名称并映射到系统的 systemd 目录
+                    dirname=\$(basename \"\$f\")
+                    EXTRA_FILES_ARGS=\"\$EXTRA_FILES_ARGS \$f=/lib/systemd/system/\$dirname\"
+                  fi
                 done
               fi
 
-              # 4. 执行打包 (输出到 /tmp 避免 mv 冲突)
+              # 4. 执行打包
+              # 注意：这里增加了 EXTRA_FILES_ARGS 来处理 .d 目录
               fpm -s dir -t deb \
                   -n onekvm \
                   -v '${{ github.event.inputs.version }}' \
@@ -62,7 +71,8 @@ jobs:
                   \$SERVICE_ARGS \
                   --prefix /opt/onekvm \
                   -p /tmp/onekvm_${{ github.event.inputs.version }}_arm64.deb \
-                  -C /opt/onekvm .
+                  -C /opt/onekvm . \
+                  \$EXTRA_FILES_ARGS
               
               # 5. 移回挂载目录
               mv /tmp/*.deb /src/
@@ -75,9 +85,9 @@ jobs:
           name: Release v${{ github.event.inputs.version }}
           files: "*.deb"
           body: |
-            ## OneKVM (PiKVM Python) ARM64
+            ## OneKVM (PiKVM Python) ARM64 Build
             - **Version:** ${{ github.event.inputs.version }}
-            - **Base Image:** Ubuntu 22.04
-            - **Services included:** Multiple kvmd-*.service files from configs.
+            - **Architecture:** ARM64
+            - **Contents:** All kvmd services and .d configuration directories.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
